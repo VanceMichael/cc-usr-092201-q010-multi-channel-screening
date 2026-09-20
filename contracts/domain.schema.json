@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "多渠道电影展映编排领域资料",
+  "type": "object",
+  "required": [
+    "domain",
+    "version",
+    "sample_id",
+    "record_types",
+    "workflow_states",
+    "facts",
+    "sample"
+  ],
+  "properties": {
+    "domain": {
+      "const": "multi-channel-screening"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sample_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "record_types": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "string"
+      }
+    },
+    "workflow_states": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "string"
+      }
+    },
+    "facts": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "string"
+      }
+    },
+    "sample": {
+      "type": "object",
+      "minProperties": 3
+    }
+  },
+  "additionalProperties": false
+}

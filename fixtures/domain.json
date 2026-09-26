@@ -1,13 +1,18 @@
 {
   "domain": "multi-channel-screening",
-  "version": 1,
+  "version": 2,
   "sample_id": "092201-010",
+  "channels": ["影院", "线上", "户外", "校园"],
   "record_types": [
     "影片母版",
+    "字幕与分级提示",
     "放映授权",
     "场地设备",
     "排片场次",
+    "映后嘉宾",
     "座席名额",
+    "惠民座席",
+    "适配问题",
     "放映回执"
   ],
   "workflow_states": [
@@ -16,17 +21,428 @@
     "可开放",
     "需调整",
     "放映中",
-    "已核销"
+    "已核销",
+    "已取消"
+  ],
+  "state_transitions": [
+    {"from": "待适配", "to": "已排片", "trigger": "母版/字幕/设备/授权/场地/嘉宾全部校验通过，确认时原子锁定授权次数与场馆时段"},
+    {"from": "已排片", "to": "可开放", "trigger": "分级提示已绑定、无阻塞性适配问题、发布名额=可售+免费=场馆容量"},
+    {"from": "可开放", "to": "需调整", "trigger": "母版校验失败/换厅/授权变更等，暂停售票"},
+    {"from": "已排片", "to": "需调整", "trigger": "映前技术核查发现阻塞问题"},
+    {"from": "需调整", "to": "已排片", "trigger": "问题解决并重新通过全部校验"},
+    {"from": "可开放", "to": "放映中", "trigger": "实际开场"},
+    {"from": "需调整", "to": "已取消", "trigger": "户外取消等，释放锁定资源"},
+    {"from": "可开放", "to": "已取消", "trigger": "开场前取消（含户外天气取消），释放授权锁定与场地，已售票自动退票"},
+    {"from": "放映中", "to": "已核销", "trigger": "回执核对实际播放母版、观众容量与权利消耗"},
+    {"from": "已排片", "to": "已取消", "trigger": "开场前取消，释放授权锁定与场地，已售票全额退回"}
   ],
   "facts": [
     "电影节设置影院、线上、户外和校园四类放映板块",
-    "活动计划展映数百部影片",
-    "部分场次面向公众提供惠民服务"
+    "活动计划展映四百余部影片",
+    "部分场次面向公众提供惠民免费座席",
+    "影片授权按渠道、地域、时段窗口和场次次数四个维度发放，例如仅允许线下两场",
+    "母版按格式声明所需播放设备能力，部分母版无法在户外设备播放",
+    "场次必须在确认排期的同一事务内锁定授权次数与场馆时段，二者同时成功或都不生效",
+    "母版适配问题在排片入口即校验并分派技术组，不等到开场前暴露",
+    "字幕与分级提示是开放售票前的必备条件",
+    "对外发布的名额始终等于可售名额加惠民免费名额，且不超过场馆容量或线上限流",
+    "母版校验失败、嘉宾改期、户外取消、线上地域限制、换厅、退票只牵动相关记录",
+    "任何重排都必须重新通过授权四维校验，已消耗与已锁定之和不得超过授权次数",
+    "户外场次因天气取消时释放其锁定的授权次数与场地，并对已售票自动退票",
+    "线上场次的观众地域限制以授权为准，超出地域的订单不得成交",
+    "开场前退票只释放座席占用，不改变权利计数；权利以实际播放逐场核销",
+    "放映结束后向版权方逐场提供实际播放母版、观众容量与已消耗权利的核对回执"
+  ],
+  "invariants": [
+    {"code": "INV-01", "name": "授权次数上限", "rule": "同一授权维度下，已锁定场次数与回执已核销场次数之和不超过 max_screenings"},
+    {"code": "INV-02", "name": "渠道授权", "rule": "场次渠道必须属于授权条款许可的渠道集合，线下限定的影片不得排入线上"},
+    {"code": "INV-03", "name": "地域授权", "rule": "线下场次举办地域与线上场次观众地域均须被授权地域覆盖，境外永不覆盖"},
+    {"code": "INV-04", "name": "时段窗口", "rule": "场次起止时间必须完全落在授权窗口内"},
+    {"code": "INV-05", "name": "母版设备适配", "rule": "母版 requires_equipment 必须是场地设备能力的子集；不满足时不创建锁定并生成技术适配问题"},
+    {"code": "INV-06", "name": "字幕齐备", "rule": "场次要求的字幕语种必须存在于所选母版的字幕清单"},
+    {"code": "INV-07", "name": "分级提示", "rule": "开放发布前影片必须绑定分级标签与提示语"},
+    {"code": "INV-08", "name": "场地时段唯一", "rule": "同一场地（或线上展映厅）的未取消场次时段不得重叠"},
+    {"code": "INV-09", "name": "嘉宾不撞期", "rule": "同一嘉宾关联场次的时段（含30分钟转场缓冲）不得重叠"},
+    {"code": "INV-10", "name": "发布名额一致", "rule": "发布总名额=可售名额+惠民免费名额=场馆容量或线上限流；已售/已约不超过可售名额"},
+    {"code": "INV-11", "name": "确认原子性", "rule": "确认场次同时锁定一次授权次数与一个场馆时段，任一校验失败则全部不生效"},
+    {"code": "INV-12", "name": "最小牵动", "rule": "变更只影响其直接关联记录；其他渠道、其他影片、其他场次的锁定与名额保持不变"},
+    {"code": "INV-13", "name": "重排不破权", "rule": "改期、换厅、替换母版后仍须通过 INV-01 至 INV-09，授权次数不因重排被重复占用或突破"},
+    {"code": "INV-14", "name": "回执核销", "rule": "已核销场次必须有回执：实际播放母版可核对、观众数不超过容量、权利按一场消耗，版权方可逐场核对"}
+  ],
+  "change_events": [
+    {"event": "母版校验失败", "affects": ["该场适配问题", "技术组工单", "该场发布/售票状态"], "never_affects": ["其他场次", "其他影片", "未确认提案不锁定任何资源"]},
+    {"event": "嘉宾改期", "affects": ["嘉宾与场次的关联关系"], "never_affects": ["场次排期", "授权锁定", "场地占用", "座席名额"]},
+    {"event": "户外场次取消", "affects": ["该户外场状态", "授权锁定次数释放", "场地时段释放", "嘉宾关联解除", "已售票自动退票"], "never_affects": ["其他渠道场次", "其他影片场次"]},
+    {"event": "线上地域限制", "affects": ["线上场可售地域", "超地域订单拦截与退票"], "never_affects": ["线下场次", "授权次数"]},
+    {"event": "换厅", "affects": ["场地占用", "设备适配结论", "容量与名额重算"], "never_affects": ["授权次数（渠道/影片/时间不变）", "嘉宾安排"]},
+    {"event": "开场前退票", "affects": ["座席占用释放"], "never_affects": ["授权计数（权利按实际播放核销）"]},
+    {"event": "放映结束核销", "affects": ["放映回执", "授权锁定转已消耗", "版权方对账记录"], "never_affects": ["其他场次"]}
+  ],
+  "region_hierarchy": {
+    "本市": [],
+    "本省其他": ["本市"],
+    "外省": ["本市", "本省其他"],
+    "境外": []
+  },
+  "region_coverage": {
+    "本市": ["本市"],
+    "本省": ["本市", "本省其他"],
+    "中国大陆": ["本市", "本省其他", "外省"]
+  },
+  "equipment_catalog": [
+    "影院服务器",
+    "DCP放映一体机",
+    "户外媒体服务器",
+    "LED大屏",
+    "笔记本+投影仪",
+    "流媒体播放",
+    "蓝光播放器"
+  ],
+  "films": [
+    {
+      "id": "F001",
+      "title": "尼罗河上的两个梦",
+      "rating": {"label": "普通级", "advisory": "无"},
+      "masters": [
+        {
+          "id": "M-F001-DCP",
+          "format": "DCP",
+          "resolution": "2K",
+          "fps": 24,
+          "requires_equipment": ["影院服务器", "DCP放映一体机"],
+          "subtitles": [
+            {"language": "中文", "type": "外挂SRT", "id": "SUB-F001-ZHO"},
+            {"language": "英文", "type": "外挂SRT", "id": "SUB-F001-ENG"}
+          ],
+          "audio_languages": ["阿拉伯语"]
+        },
+        {
+          "id": "M-F001-PRORES",
+          "format": "ProRes",
+          "resolution": "1080p",
+          "fps": 24,
+          "requires_equipment": ["户外媒体服务器", "笔记本+投影仪"],
+          "subtitles": [
+            {"language": "中文", "type": "外挂SRT", "id": "SUB-F001-ZHO-PR"},
+            {"language": "英文", "type": "外挂SRT", "id": "SUB-F001-ENG-PR"}
+          ],
+          "audio_languages": ["阿拉伯语"]
+        }
+      ]
+    },
+    {
+      "id": "F002",
+      "title": "潮汐短篇",
+      "rating": {"label": "普通级", "advisory": "无"},
+      "masters": [
+        {
+          "id": "M-F002-STREAM",
+          "format": "HLS",
+          "resolution": "1080p",
+          "fps": 25,
+          "requires_equipment": ["流媒体播放"],
+          "subtitles": [{"language": "中文", "type": "内嵌字幕", "id": "SUB-F002-ZHO"}],
+          "audio_languages": ["中文"]
+        }
+      ]
+    },
+    {
+      "id": "F003",
+      "title": "星灯",
+      "rating": {"label": "普通级", "advisory": "无"},
+      "masters": [
+        {
+          "id": "M-F003-DCP",
+          "format": "DCP",
+          "resolution": "2K",
+          "fps": 24,
+          "requires_equipment": ["影院服务器", "DCP放映一体机"],
+          "subtitles": [{"language": "中文", "type": "内嵌字幕", "id": "SUB-F003-ZHO-DCP"}],
+          "audio_languages": ["中文"]
+        },
+        {
+          "id": "M-F003-PRORES",
+          "format": "ProRes",
+          "resolution": "1080p",
+          "fps": 24,
+          "requires_equipment": ["户外媒体服务器", "LED大屏", "笔记本+投影仪"],
+          "subtitles": [{"language": "中文", "type": "内嵌字幕", "id": "SUB-F003-ZHO-PR"}],
+          "audio_languages": ["中文"]
+        }
+      ]
+    },
+    {
+      "id": "F004",
+      "title": "课堂之间",
+      "rating": {"label": "普通级", "advisory": "无"},
+      "masters": [
+        {
+          "id": "M-F004-DCP",
+          "format": "DCP",
+          "resolution": "2K",
+          "fps": 24,
+          "requires_equipment": ["DCP放映一体机"],
+          "subtitles": [{"language": "中文", "type": "外挂SRT", "id": "SUB-F004-ZHO"}],
+          "audio_languages": ["中文"]
+        },
+        {
+          "id": "M-F004-BD",
+          "format": "Blu-ray",
+          "resolution": "1080p",
+          "fps": 24,
+          "requires_equipment": ["蓝光播放器"],
+          "subtitles": [{"language": "中文", "type": "内嵌字幕", "id": "SUB-F004-ZHO-BD"}],
+          "audio_languages": ["中文"]
+        }
+      ]
+    },
+    {
+      "id": "F005",
+      "title": "站台记忆",
+      "rating": {"label": "普通级", "advisory": "无"},
+      "masters": [
+        {
+          "id": "M-F005-DCP",
+          "format": "DCP",
+          "resolution": "4K",
+          "fps": 24,
+          "requires_equipment": ["影院服务器", "DCP放映一体机"],
+          "subtitles": [{"language": "中文", "type": "外挂SRT", "id": "SUB-F005-ZHO"}],
+          "audio_languages": ["原声"]
+        }
+      ]
+    },
+    {
+      "id": "F006",
+      "title": "远程旅人",
+      "rating": {"label": "辅导十五级", "advisory": "含部分激烈言论"},
+      "masters": [
+        {
+          "id": "M-F006-STREAM",
+          "format": "HLS",
+          "resolution": "1080p",
+          "fps": 24,
+          "requires_equipment": ["流媒体播放"],
+          "subtitles": [
+            {"language": "中文", "type": "外挂VTT", "id": "SUB-F006-ZHO"},
+            {"language": "英文", "type": "外挂VTT", "id": "SUB-F006-ENG"}
+          ],
+          "audio_languages": ["中文"]
+        }
+      ]
+    }
+  ],
+  "venues": [
+    {"id": "V-CINEMA1", "name": "影城一号厅", "channel": "影院", "capacity": 320, "equipment": ["影院服务器", "DCP放映一体机"], "weather_dependent": false},
+    {"id": "V-CINEMA3", "name": "影城三号厅", "channel": "影院", "capacity": 188, "equipment": ["影院服务器", "DCP放映一体机"], "weather_dependent": false},
+    {"id": "V-HALL-A", "name": "大学礼堂A", "channel": "校园", "capacity": 420, "equipment": ["DCP放映一体机", "户外媒体服务器", "笔记本+投影仪"], "weather_dependent": false},
+    {"id": "V-ROOM-B", "name": "大学阶梯教室B", "channel": "校园", "capacity": 120, "equipment": ["笔记本+投影仪"], "weather_dependent": false},
+    {"id": "V-RIVERSIDE", "name": "江滨户外广场", "channel": "户外", "capacity": 1200, "equipment": ["户外媒体服务器", "LED大屏", "笔记本+投影仪"], "weather_dependent": true},
+    {"id": "V-ONLINE", "name": "云上影展", "channel": "线上", "capacity": 8000, "equipment": ["流媒体播放"], "weather_dependent": false}
+  ],
+  "licenses": [
+    {
+      "id": "L-F001",
+      "film": "F001",
+      "copyright_holder": "尼罗河影业",
+      "grants": [
+        {"id": "G-F001-LINE", "channels": ["影院", "校园"], "regions": ["本市"], "max_screenings": 2, "window": {"start": "2026-10-10T00:00", "end": "2026-10-20T23:59"}},
+        {"id": "G-F001-OUT", "channels": ["户外"], "regions": ["本市"], "max_screenings": 1, "window": {"start": "2026-09-15T00:00", "end": "2026-10-20T23:59"}}
+      ]
+    },
+    {
+      "id": "L-F002",
+      "film": "F002",
+      "copyright_holder": "潮汐工作室",
+      "grants": [
+        {"id": "G-F002-NET", "channels": ["线上"], "regions": ["中国大陆"], "max_screenings": 3, "window": {"start": "2026-10-10T00:00", "end": "2026-10-20T23:59"}}
+      ]
+    },
+    {
+      "id": "L-F003",
+      "film": "F003",
+      "copyright_holder": "星灯动画",
+      "grants": [
+        {"id": "G-F003-CIN", "channels": ["影院"], "regions": ["本市"], "max_screenings": 1, "window": {"start": "2026-10-10T00:00", "end": "2026-10-20T23:59"}},
+        {"id": "G-F003-OUT", "channels": ["户外"], "regions": ["本市"], "max_screenings": 2, "window": {"start": "2026-09-15T00:00", "end": "2026-10-20T23:59"}}
+      ]
+    },
+    {
+      "id": "L-F004",
+      "film": "F004",
+      "copyright_holder": "课堂纪实厂牌",
+      "grants": [
+        {"id": "G-F004-CAM", "channels": ["校园"], "regions": ["本市"], "max_screenings": 4, "window": {"start": "2026-10-10T00:00", "end": "2026-10-20T23:59"}}
+      ]
+    },
+    {
+      "id": "L-F005",
+      "film": "F005",
+      "copyright_holder": "修复影像基金会",
+      "grants": [
+        {"id": "G-F005-CIN", "channels": ["影院"], "regions": ["本市"], "max_screenings": 1, "window": {"start": "2026-10-10T00:00", "end": "2026-10-20T23:59"}}
+      ]
+    },
+    {
+      "id": "L-F006",
+      "film": "F006",
+      "copyright_holder": "远程旅人制片社",
+      "grants": [
+        {"id": "G-F006-NET", "channels": ["线上"], "regions": ["本省"], "max_screenings": 2, "window": {"start": "2026-10-10T00:00", "end": "2026-10-20T23:59"}}
+      ]
+    }
+  ],
+  "guests": [
+    {
+      "id": "G001",
+      "name": "梅·哈桑",
+      "role": "F001导演",
+      "screening_ids": ["S1001"],
+      "available_windows": [
+        {"start": "2026-10-12T18:30", "end": "2026-10-12T22:00"},
+        {"start": "2026-10-18T18:00", "end": "2026-10-18T22:00"}
+      ]
+    },
+    {
+      "id": "G002",
+      "name": "林澜",
+      "role": "F004受访者",
+      "screening_ids": ["S1004"],
+      "available_windows": [
+        {"start": "2026-10-15T13:00", "end": "2026-10-15T18:00"}
+      ]
+    }
+  ],
+  "screenings": [
+    {
+      "id": "S0901",
+      "film": "F003",
+      "master": "M-F003-PRORES",
+      "venue": "V-RIVERSIDE",
+      "start": "2026-09-20T19:30",
+      "end": "2026-09-20T21:00",
+      "region": "本市",
+      "required_subtitles": ["中文"],
+      "free_seats": 0,
+      "sales_by_region": {"本市": 820},
+      "status": "已核销"
+    },
+    {
+      "id": "S1001",
+      "film": "F001",
+      "master": "M-F001-DCP",
+      "venue": "V-CINEMA3",
+      "start": "2026-10-12T19:00",
+      "end": "2026-10-12T21:00",
+      "region": "本市",
+      "required_subtitles": ["中文"],
+      "free_seats": 20,
+      "sales_by_region": {"本市": 120},
+      "guest_ids": ["G001"],
+      "status": "可开放"
+    },
+    {
+      "id": "S1002",
+      "film": "F001",
+      "master": "M-F001-PRORES",
+      "venue": "V-RIVERSIDE",
+      "start": "2026-10-13T19:30",
+      "end": "2026-10-13T21:45",
+      "region": "本市",
+      "required_subtitles": ["中文"],
+      "free_seats": 0,
+      "sales_by_region": {"本市": 60},
+      "guest_ids": [],
+      "status": "可开放"
+    },
+    {
+      "id": "S1003",
+      "film": "F002",
+      "master": "M-F002-STREAM",
+      "venue": "V-ONLINE",
+      "start": "2026-10-14T20:00",
+      "end": "2026-10-14T22:00",
+      "region": "中国大陆",
+      "required_subtitles": ["中文"],
+      "capacity_override": 3000,
+      "free_seats": 0,
+      "sales_by_region": {"外省": 500},
+      "guest_ids": [],
+      "status": "可开放"
+    },
+    {
+      "id": "S1004",
+      "film": "F004",
+      "master": "M-F004-DCP",
+      "venue": "V-HALL-A",
+      "start": "2026-10-15T14:00",
+      "end": "2026-10-15T16:10",
+      "region": "本市",
+      "required_subtitles": ["中文"],
+      "free_seats": 80,
+      "sales_by_region": {},
+      "guest_ids": ["G002"],
+      "status": "已排片"
+    },
+    {
+      "id": "S1005",
+      "film": "F005",
+      "master": "M-F005-DCP",
+      "venue": "V-CINEMA1",
+      "start": "2026-10-16T16:00",
+      "end": "2026-10-16T17:40",
+      "region": "本市",
+      "required_subtitles": ["中文"],
+      "free_seats": 10,
+      "sales_by_region": {},
+      "guest_ids": [],
+      "status": "已排片"
+    },
+    {
+      "id": "S1006",
+      "film": "F006",
+      "master": "M-F006-STREAM",
+      "venue": "V-ONLINE",
+      "start": "2026-10-17T20:00",
+      "end": "2026-10-17T21:30",
+      "region": "本省",
+      "required_subtitles": ["中文"],
+      "capacity_override": 800,
+      "free_seats": 0,
+      "sales_by_region": {},
+      "guest_ids": [],
+      "status": "已排片"
+    }
+  ],
+  "adaptation_issues": [
+    {"id": "ISSUE-901", "screening": "S1002", "summary": "ProRes 色彩配置与 LED 大屏不一致，已制作 Rec.709 替换母版", "assigned_to": "技术组", "blocking": false, "status": "已解决"}
+  ],
+  "receipts": [
+    {
+      "id": "R-0901",
+      "screening": "S0901",
+      "planned_master": "M-F003-PRORES",
+      "played_master": "M-F003-PRORES",
+      "substituted": false,
+      "actual_start": "2026-09-20T19:30",
+      "actual_end": "2026-09-20T20:58",
+      "capacity": 1200,
+      "attendees": 820,
+      "rights": [{"license": "L-F003", "grant": "G-F003-OUT", "screenings_consumed": 1}],
+      "reported_to": "星灯动画",
+      "status": "已核销"
+    }
   ],
   "sample": {
-    "film": "埃及电影周样例片",
-    "channel": "校园",
-    "venue": "大学礼堂A",
-    "licensed_screenings": 2
+    "film": "F001",
+    "film_title": "尼罗河上的两个梦",
+    "screening": "S1001",
+    "channel": "影院",
+    "venue": "V-CINEMA3",
+    "licensed_screenings": 2,
+    "rights_locked": 1,
+    "free_seats": 20,
+    "capacity": 188,
+    "sellable": 168
   }
 }

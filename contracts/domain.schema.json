@@ -1,14 +1,27 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "多渠道电影展映编排领域资料",
+  "title": "多渠道电影展映编排领域资料 v2",
   "type": "object",
   "required": [
     "domain",
     "version",
     "sample_id",
+    "channels",
     "record_types",
     "workflow_states",
+    "state_transitions",
     "facts",
+    "invariants",
+    "change_events",
+    "region_coverage",
+    "equipment_catalog",
+    "films",
+    "licenses",
+    "venues",
+    "guests",
+    "screenings",
+    "adaptation_issues",
+    "receipts",
     "sample"
   ],
   "properties": {
@@ -17,37 +30,67 @@
     },
     "version": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 2
     },
-    "sample_id": {
-      "type": "string",
-      "minLength": 1
-    },
-    "record_types": {
+    "sample_id": {"type": "string", "minLength": 1},
+    "channels": {
       "type": "array",
-      "minItems": 3,
+      "minItems": 4,
+      "items": {"enum": ["影院", "线上", "户外", "校园"]}
+    },
+    "record_types": {"type": "array", "minItems": 5, "items": {"type": "string"}},
+    "workflow_states": {"type": "array", "minItems": 5, "items": {"type": "string"}},
+    "state_transitions": {
+      "type": "array",
       "items": {
-        "type": "string"
+        "type": "object",
+        "required": ["from", "to", "trigger"],
+        "properties": {
+          "from": {"type": "string"},
+          "to": {"type": "string"},
+          "trigger": {"type": "string"}
+        },
+        "additionalProperties": false
       }
     },
-    "workflow_states": {
+    "facts": {"type": "array", "minItems": 2, "items": {"type": "string"}},
+    "invariants": {
       "type": "array",
-      "minItems": 3,
       "items": {
-        "type": "string"
+        "type": "object",
+        "required": ["code", "name", "rule"],
+        "properties": {
+          "code": {"type": "string"},
+          "name": {"type": "string"},
+          "rule": {"type": "string"}
+        },
+        "additionalProperties": false
       }
     },
-    "facts": {
+    "change_events": {
       "type": "array",
-      "minItems": 2,
       "items": {
-        "type": "string"
+        "type": "object",
+        "required": ["event", "affects", "never_affects"],
+        "properties": {
+          "event": {"type": "string"},
+          "affects": {"type": "array", "items": {"type": "string"}},
+          "never_affects": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": false
       }
     },
-    "sample": {
-      "type": "object",
-      "minProperties": 3
-    }
+    "region_hierarchy": {"type": "object"},
+    "region_coverage": {"type": "object"},
+    "equipment_catalog": {"type": "array", "items": {"type": "string"}},
+    "films": {"type": "array", "items": {"type": "object"}},
+    "licenses": {"type": "array", "items": {"type": "object"}},
+    "venues": {"type": "array", "items": {"type": "object"}},
+    "guests": {"type": "array", "items": {"type": "object"}},
+    "screenings": {"type": "array", "items": {"type": "object"}},
+    "adaptation_issues": {"type": "array", "items": {"type": "object"}},
+    "receipts": {"type": "array", "items": {"type": "object"}},
+    "sample": {"type": "object", "minProperties": 3}
   },
   "additionalProperties": false
 }
